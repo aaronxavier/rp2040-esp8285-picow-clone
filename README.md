@@ -15,6 +15,8 @@ The board actually has two microcontrollers. This repo programs both, with each 
 There is no AT firmware here. The ESP runs its own program, and the two chips exchange text lines over UART.
 **The application:** a 16x8 WS2812 display on GP22, made of two chained 8x8 panels, that you control from your browser.
 - **Scrolling text:** set the text, color, speed and brightness. "Surprise me" spreads a rainbow across the string.
+- **Clock:** 24-hour `HH MM` in a 3x5 font, with a seconds bar along the bottom row. The time comes from NTP on the ESP (time zone: `TZ_INFO` in `esp/src/main.cpp`, default Europe/Berlin).
+- **Timers:** set minutes and seconds, or use the 1/5/10/25-minute quick buttons. The display counts down `MM SS` (or `H MM` from one hour up), with the bar showing time left. At zero it flashes for 10 s, then goes back to the clock.
 - **Images:** pick any image. The browser crops it to a 2:1 strip, shrinks it to 16x8 and gamma-corrects it, then the display shows it.
 
 On boot the display scrolls its IP address. A red dot means it isn't on WiFi yet.
@@ -46,6 +48,9 @@ The array is powered from VSYS, so `pico/power.h` caps the estimated LED current
 | ESP → Pico | `WIFI <0\|1> <ip>` | every 1 s; on first connect the Pico scrolls the IP |
 | ESP → Pico | `TEXT <rrggbb> <speed> <rainbow 0\|1> <text>` | scroll text, speed in columns/s (1–60); rainbow spreads hues over the string |
 | ESP → Pico | `IMG <768 hex>` | 16x8 frame, `rrggbb` per pixel, row-major from top-left |
+| ESP → Pico | `TIME <secs>` | local seconds since midnight, sent on each new NTP second |
+| ESP → Pico | `CLOCK <rrggbb>` | show the clock |
+| ESP → Pico | `TIMER <secs> <rrggbb>` | start a countdown (the Pico times it); `0` cancels |
 | Pico → ESP | `T <text>` | telemetry, served at `/telemetry` |
 
 Unknown lines are ignored, which covers the ESP's boot-ROM noise. On the Pico, UART RX is interrupt-driven into a ring buffer, so the main loop never blocks on the ESP.
@@ -54,6 +59,8 @@ Unknown lines are ignored, which covers the ESP's boot-ROM noise. On the Pico, U
 
 - `/`: the control page
 - `/text?s=Hello&c=00ff40&v=12&r=0`: scroll text (`c` = color, `v` = columns/s, `r=1` = rainbow)
+- `/clock?c=ff8000`: show the clock
+- `/timer?s=300&c=ff8000`: 5-minute timer (`s=0` cancels, max 86400)
 - `/img?d=<768 hex>`: show a 16x8 frame (128 × `rrggbb`, row-major from the top-left). This is the API for driving the display from your own code.
 
 Each channel value is also its brightness: to dim a pixel, scale its `rr gg bb`.

@@ -3,11 +3,17 @@
 //                 "TEXT <rrggbb> <speed> <rainbow 0|1> <text>"
 //                                                 scroll text, speed in columns/s (1-60)
 //                 "IMG <768 hex>"                 16x8 frame, rrggbb per pixel, row-major from top-left
+//                 "TIME <secs>"                   local seconds since midnight, sent on each new second (NTP)
+//                 "CLOCK <rrggbb>"                show the clock
+//                 "TIMER <secs> <rrggbb>"         countdown, flashes at 0 then back to the clock; 0 cancels
 //   Pico -> ESP:  "T <anything>"                  latest telemetry, served at /telemetry
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <ArduinoOTA.h>
+#include <time.h>
 #include "secrets.h"
+
+#define TZ_INFO "CET-1CEST,M3.5.0,M10.5.0/3"  // POSIX TZ for Europe/Berlin; change for your time zone
 
 static ESP8266WebServer server(80);
 static String telemetry, rx;
@@ -32,6 +38,13 @@ small{color:#888}
 <input id=rainbow type=checkbox> Surprise me</label>
 <label>Speed <input id=speed type=range min=1 max=60 value=12> <span id=speedv></span> px/s</label>
 <button id=showText>Show text</button></fieldset>
+<fieldset><legend>Clock &amp; timer</legend>
+<label>Color <input id=ccolor type=color value="#ff8000"> <button id=showClock>Show clock</button></label>
+<label>Timer <input id=tmin type=number min=0 max=1440 value=5 style="width:4.5em"> min
+<input id=tsec type=number min=0 max=59 value=0 style="width:3.5em"> s</label>
+<button id=startTimer>Start timer</button> <button id=cancelTimer>Cancel</button>
+<p>Quick: <button class=quick data-m=1>1 min</button> <button class=quick data-m=5>5 min</button>
+<button class=quick data-m=10>10 min</button> <button class=quick data-m=25>25 min</button></fieldset>
 <fieldset><legend>Image</legend>
 <input id=file type=file accept="image/*">
 <canvas id=prev width=16 height=8></canvas>
@@ -41,13 +54,18 @@ small{color:#888}
 const W = 16, H = 8;  // display size: two 8x8 panels side by side
 const q = id => document.getElementById(id), hex = n => Math.round(n).toString(16).padStart(2, '0');
 const k = () => q('bright').value / 100;
+const scaled = c => [1, 3, 5].map(i => hex(parseInt(c.substr(i, 2), 16) * k())).join('');  // #rrggbb * brightness
 for (const id of ['bright', 'speed']) (q(id).oninput = () => q(id + 'v').textContent = q(id).value)();
 
 q('showText').onclick = () => {
   const rb = q('rainbow').checked, c = rb ? '#ffffff' : q('color').value;  // rainbow: Pico uses only the brightness
-  const rgb = [1, 3, 5].map(i => hex(parseInt(c.substr(i, 2), 16) * k())).join('');
-  fetch('/text?' + new URLSearchParams({s: q('text').value, c: rgb, v: q('speed').value, r: +rb}));
+  fetch('/text?' + new URLSearchParams({s: q('text').value, c: scaled(c), v: q('speed').value, r: +rb}));
 };
+q('showClock').onclick = () => fetch('/clock?c=' + scaled(q('ccolor').value));
+const timer = s => fetch('/timer?' + new URLSearchParams({s, c: scaled(q('ccolor').value)}));
+q('startTimer').onclick = () => timer(q('tmin').value * 60 + +q('tsec').value);
+q('cancelTimer').onclick = () => timer(0);
+for (const b of document.querySelectorAll('.quick')) b.onclick = () => timer(b.dataset.m * 60);
 q('rainbow').onchange = () => q('color').disabled = q('rainbow').checked;
 q('text').onkeydown = e => { if (e.key == 'Enter') q('showText').click(); };  // must not return false: that cancels typing
 
@@ -104,13 +122,31 @@ static void handleImg() {
     server.send(204);
 }
 
+static void handleClock() {
+    String c = server.arg("c");
+    if (!isHex(c, 6)) return server.send(400, "text/plain", "need c=rrggbb");
+    Serial.printf("CLOCK %s\n", c.c_str());
+    server.send(204);
+}
+
+static void handleTimer() {
+    String c = server.arg("c");
+    long s = server.arg("s").toInt();
+    if (!isHex(c, 6) || s < 0 || s > 86400) return server.send(400, "text/plain", "need c=rrggbb, s=0..86400 (0 cancels)");
+    Serial.printf("TIMER %ld %s\n", s, c.c_str());
+    server.send(204);
+}
+
 void setup() {
     Serial.begin(115200);
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
+    configTime(TZ_INFO, "pool.ntp.org", "time.google.com");
     server.on("/", [] { server.send_P(200, "text/html", PAGE); });
     server.on("/text", handleText);
     server.on("/img", handleImg);
+    server.on("/clock", handleClock);
+    server.on("/timer", handleTimer);
     server.on("/telemetry", [] { server.send(200, "text/plain", telemetry); });
     server.begin();
     ArduinoOTA.setHostname("pico-esp");  // after first serial flash: pio run -e ota -t upload
@@ -126,6 +162,15 @@ void loop() {
         if (ch != '\n') { if (rx.length() < 200) rx += ch; continue; }
         if (rx.startsWith("T ")) telemetry = rx.substring(2);
         rx = "";
+    }
+
+    static time_t last_t;
+    time_t t = time(nullptr);
+    if (t > 1700000000 && t != last_t) {  // NTP synced, new second
+        last_t = t;
+        struct tm lt;
+        localtime_r(&t, &lt);
+        Serial.printf("TIME %d\n", lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec);
     }
 
     static uint32_t last;

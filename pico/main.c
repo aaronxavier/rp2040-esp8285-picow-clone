@@ -53,7 +53,7 @@ static void leds_show(void) {
 }
 
 // ---- scrolling text ----
-static enum { MODE_IDLE, MODE_TEXT, MODE_IMAGE } mode;
+static enum { MODE_IDLE, MODE_TEXT, MODE_IMAGE, MODE_CLOCK, MODE_TIMER } mode;
 static uint8_t cols[MAX_COLS];  // one byte per column, bit y = row y lit
 static int ncols, scroll;
 static uint32_t text_color, step_ms;
@@ -110,6 +110,67 @@ static void text_draw(void) {
         for (int y = 0; y < H; y++) pixels[xy(x, y)] = cols[i] >> y & 1 ? c : 0;
     }
     leds_show();
+}
+
+// ---- clock and timer ----
+// 3x5 digits, one byte per row, bit 2 = leftmost column
+static const uint8_t DIGITS[10][5] = {
+    {7, 5, 5, 5, 7}, {2, 6, 2, 2, 7}, {7, 1, 7, 4, 7}, {7, 1, 7, 1, 7}, {5, 5, 7, 1, 1},
+    {7, 4, 7, 1, 7}, {7, 4, 7, 5, 7}, {7, 1, 2, 2, 2}, {7, 5, 7, 5, 7}, {7, 5, 7, 1, 7},
+};
+static int32_t day_secs = -1;        // local seconds since midnight, from the ESP's NTP; -1 = not synced yet
+static absolute_time_t day_secs_at;  // when day_secs arrived
+static uint32_t clock_color = 0x402000, timer_color;
+static absolute_time_t timer_end, alarm_end;
+static uint32_t timer_total_s;
+static absolute_time_t next_face;
+
+// "AA BB" in 3x5 digits (no colon: 16 columns only fit a 2-column gap), plus a bar of `bar` columns on the bottom row.
+// a < 0 draws dashes.
+static void face_draw(int a, int b, int bar, uint32_t color) {
+    memset(pixels, 0, sizeof pixels);
+    static const int X0[4] = {0, 4, 9, 13};
+    int d[4] = {a / 10, a % 10, b / 10, b % 10};
+    for (int i = 0; i < 4; i++)
+        for (int r = 0; r < 5; r++)
+            for (int c = 0; c < 3; c++)
+                if (a < 0 ? r == 2 : DIGITS[d[i]][r] >> (2 - c) & 1) pixels[xy(X0[i] + c, 1 + r)] = color;
+    uint32_t dim = color >> 2 & 0x3f3f3f;  // bar at quarter brightness
+    for (int x = 0; x < bar && x < W; x++) pixels[xy(x, H - 1)] = dim;
+    leds_show();
+}
+
+static void clock_draw(void) {
+    if (day_secs < 0) {
+        face_draw(-1, 0, 0, clock_color);
+        return;
+    }
+    int s = (day_secs + absolute_time_diff_us(day_secs_at, get_absolute_time()) / 1000000) % 86400;
+    face_draw(s / 3600, s / 60 % 60, (s % 60 + 1) * W / 60, clock_color);  // bar fills over the minute
+}
+
+static void timer_draw(void) {
+    int64_t left_us = absolute_time_diff_us(get_absolute_time(), timer_end);
+    if (left_us > 0) {
+        int s = (left_us + 999999) / 1000000;  // round up: shows 00:01 until it really is over
+        int bar = (s * W + timer_total_s - 1) / timer_total_s;  // remaining fraction
+        if (s >= 3600) face_draw(s / 3600, s / 60 % 60, bar, timer_color);  // H MM
+        else face_draw(s / 60, s % 60, bar, timer_color);                     // MM SS
+        return;
+    }
+    if (is_nil_time(alarm_end)) alarm_end = make_timeout_time_ms(10000);
+    if (time_reached(alarm_end)) {  // alarm done: back to the clock
+        mode = MODE_CLOCK;
+        clock_draw();
+        return;
+    }
+    bool on = to_ms_since_boot(get_absolute_time()) / 250 % 2;  // flash 2x per second
+    for (int i = 0; i < W * H; i++) pixels[i] = on ? timer_color : 0;
+    leds_show();
+}
+
+static void face_now(void) {
+    next_face = get_absolute_time();
 }
 
 // ---- UART RX into a ring buffer from the IRQ, so the main loop never misses bytes ----
@@ -187,6 +248,26 @@ static void handle(char *line) {
         text_set(line + off, c, speed, rb);
     } else if (!strncmp(line, "IMG ", 4)) {
         printf("image %s\n", image_set(line + 4) ? "ok" : "bad");
+    } else if (sscanf(line, "TIMER %d %6x", &speed, &c) == 2) {  // seconds, color; 0 cancels
+        printf("timer %ds\n", speed);
+        if (speed > 0) {
+            timer_total_s = speed;
+            timer_end = make_timeout_time_ms(speed * 1000);
+            timer_color = c;
+            alarm_end = nil_time;
+            mode = MODE_TIMER;
+        } else if (mode == MODE_TIMER) {
+            mode = MODE_CLOCK;
+        }
+        face_now();
+    } else if (sscanf(line, "TIME %d", &speed) == 1) {  // every second, aligned to the ESP's second boundary
+        day_secs = speed;
+        day_secs_at = get_absolute_time();
+    } else if (sscanf(line, "CLOCK %6x", &c) == 1) {
+        printf("clock #%06x\n", c);
+        clock_color = c;
+        mode = MODE_CLOCK;
+        face_now();
     }
     // anything else (e.g. ESP boot ROM noise) is ignored
 }
@@ -213,11 +294,21 @@ int main(void) {
             text_draw();
             scroll = (scroll + 1) % ncols;
         }
+        if ((mode == MODE_CLOCK || mode == MODE_TIMER) && time_reached(next_face)) {
+            next_face = make_timeout_time_ms(250);
+            if (mode == MODE_CLOCK) clock_draw();
+            else timer_draw();
+        }
         if (time_reached(next_tx)) {  // telemetry, 1 Hz
             next_tx = delayed_by_ms(next_tx, 1000);
-            char t[64];
-            snprintf(t, sizeof t, "T uptime_s=%lu mode=%s\n", (unsigned long)(to_ms_since_boot(get_absolute_time()) / 1000),
-                     mode == MODE_TEXT ? "text" : mode == MODE_IMAGE ? "image" : "idle");
+            char t[80];
+            int n = snprintf(t, sizeof t, "T uptime_s=%lu mode=%s", (unsigned long)(to_ms_since_boot(get_absolute_time()) / 1000),
+                             (const char *[]){"idle", "text", "image", "clock", "timer"}[mode]);
+            if (day_secs >= 0) {
+                int s = (day_secs + absolute_time_diff_us(day_secs_at, get_absolute_time()) / 1000000) % 86400;
+                n += snprintf(t + n, sizeof t - n, " time=%02d:%02d:%02d", s / 3600, s / 60 % 60, s % 60);
+            }
+            snprintf(t + n, sizeof t - n, "\n");
             uart_puts(ESP_UART, t);
         }
     }
