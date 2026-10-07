@@ -23,6 +23,8 @@ The Pico handles all display timing, so scrolling stays smooth whatever WiFi is 
 
 ## Hardware
 
+![Wiring diagram](docs/wiring.svg)
+
 | Signal | RP2040 | ESP8285 |
 |---|---|---|
 | UART TX → RX | GP0 | RX |
@@ -50,8 +52,19 @@ Unknown lines are ignored, which covers the ESP's boot-ROM noise. On the Pico, U
 
 - `/`: the control page
 - `/text?s=Hello&c=00ff40&v=12&r=0`: scroll text (`c` = color, `v` = columns/s, `r=1` = rainbow)
-- `/img?d=<384 hex>`: show an 8x8 image
+- `/img?d=<384 hex>`: show an 8x8 frame (64 × `rrggbb`, row-major from the top-left). This is the API for driving the matrix from your own code.
+
+Each channel value is also its brightness: to dim a pixel, scale its `rr gg bb`.
+The API handles about 18 frames/s (≈55 ms per request).
 - `/telemetry`: latest Pico telemetry line
+
+## Demos (`demos/`, Python standard library only)
+
+These drive the matrix only through the HTTP API:
+
+    python3 demos/pong.py              # computer vs computer pong, first to 5
+    python3 demos/pong.py --selftest   # game logic only, no network
+    python3 demos/breath.py 30         # calm full-panel yellow breathing for 30 s
 
 ## Build & flash
 
@@ -93,6 +106,7 @@ JiriBilek's MicroPython library.
   [JiriBilek/RP2040_PicoW_ESP8285_Library](https://github.com/JiriBilek/RP2040_PicoW_ESP8285_Library)
   worked out how to use these boards.
 - `pico/ws2812.pio` © Raspberry Pi Ltd, BSD-3-Clause.
+- Wiring diagram drawn with [schemdraw](https://schemdraw.readthedocs.io/) (`docs/wiring.py`).
 - `pico/font8x8_basic.h` from [dhepper/font8x8](https://github.com/dhepper/font8x8), public domain.
 
 ## License
