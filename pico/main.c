@@ -1,5 +1,6 @@
 // Pico side: owns the 8x8 WS2812 matrix and its timing. The ESP8285 does WiFi/web.
 // UART0 line protocol, see esp/src/main.cpp.
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include "pico/stdlib.h"
@@ -42,9 +43,25 @@ static int xy(int x, int y) {  // x: 0 = left of the whole display, y: 0 = top
 }
 
 // ponytail: blocking PIO pushes, ~30us/LED (~4ms for 2 panels); move to DMA if this stalls realtime work
+// Colors in pixels[] are perceptual (like a color picker). LED light output is linear in the value sent,
+// but the eye is not, so map through a gamma curve, then apply the global brightness.
+#define GAMMA 2.2f  // calibration knob: raise if mid tones look too bright, lower if too dark
+static uint8_t gamma_lut[256];
+static uint8_t brightness = 13;  // 0..255 on the linear scale; BRIGHT sets it in percent (default 5%)
+
+static void gamma_init(void) {
+    for (int i = 0; i < 256; i++) gamma_lut[i] = (uint8_t)(powf(i / 255.0f, GAMMA) * 255.0f + 0.5f);
+}
+
+static uint32_t to_led(uint32_t c) {
+    uint32_t r = gamma_lut[c >> 16 & 0xff], g = gamma_lut[c >> 8 & 0xff], b = gamma_lut[c & 0xff];
+    return (r * brightness + 127) / 255 << 16 | (g * brightness + 127) / 255 << 8 | (b * brightness + 127) / 255;
+}
+
 static void leds_show(void) {
-    static uint32_t frame[W * H];
-    power_limit(pixels, frame, W * H);  // array runs off VSYS: never full brightness
+    static uint32_t led[W * H], frame[W * H];
+    for (int i = 0; i < W * H; i++) led[i] = to_led(pixels[i]);
+    power_limit(led, frame, W * H);  // on real LED values: array runs off VSYS, never full brightness
     for (int i = 0; i < W * H; i++) {
         uint32_t c = frame[i];
         // WS2812 wants GRB, MSB first; PIO shifts out the top 24 bits
@@ -120,7 +137,7 @@ static const uint8_t DIGITS[10][5] = {
 };
 static int32_t day_secs = -1;        // local seconds since midnight, from the ESP's NTP; -1 = not synced yet
 static absolute_time_t day_secs_at;  // when day_secs arrived
-static uint32_t clock_color = 0x0d0600, timer_color;  // web page default: #ff8000 at 5% brightness
+static uint32_t clock_color = 0xff8000, timer_color;  // same orange as the web page default
 static absolute_time_t timer_end, alarm_end;
 static uint32_t timer_total_s;
 static absolute_time_t next_face;
@@ -135,7 +152,7 @@ static void face_draw(int a, int b, int bar, uint32_t color) {
         for (int r = 0; r < 5; r++)
             for (int c = 0; c < 3; c++)
                 if (a < 0 ? r == 2 : DIGITS[d[i]][r] >> (2 - c) & 1) pixels[xy(X0[i] + c, 1 + r)] = color;
-    uint32_t dim = color >> 2 & 0x3f3f3f;  // bar at quarter brightness
+    uint32_t dim = color >> 1 & 0x7f7f7f;  // bar at half (perceptual) brightness
     for (int x = 0; x < bar && x < W; x++) pixels[xy(x, H - 1)] = dim;
     leds_show();
 }
@@ -256,6 +273,13 @@ static void handle(char *line) {
     } else if (sscanf(line, "TIME %d", &speed) == 1) {  // every second, aligned to the ESP's second boundary
         day_secs = speed;
         day_secs_at = get_absolute_time();
+    } else if (sscanf(line, "BRIGHT %d", &speed) == 1) {  // percent, resent every second by the ESP
+        uint8_t b = (speed < 0 ? 0 : speed > 100 ? 100 : speed) * 255 / 100;
+        if (b != brightness) {
+            brightness = b;
+            printf("brightness %d%%\n", speed);
+            leds_show();  // re-apply to whatever is on screen
+        }
     } else if (sscanf(line, "CLOCK %6x", &c) == 1) {
         printf("clock #%06x\n", c);
         clock_color = c;
@@ -275,6 +299,7 @@ int main(void) {
     irq_set_enabled(UART0_IRQ, true);
     uart_set_irq_enables(ESP_UART, true, false);
 
+    gamma_init();
     ws2812_program_init(pio0, 0, pio_add_program(pio0, &ws2812_program), LED_PIN, 800000, false);
     leds_show();  // all off
 

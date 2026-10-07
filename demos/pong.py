@@ -8,7 +8,8 @@ import random, socket, sys, time, urllib.request
 
 W, H = 16, 8
 PADDLE = 3
-LEFT_C, RIGHT_C, BALL_C, TRAIL_C = (0, 40, 120), (120, 20, 0), (110, 110, 110), (20, 20, 20)
+# perceptual colors; the Pico applies gamma and the global brightness (web page slider / /bright)
+LEFT_C, RIGHT_C, BALL_C, TRAIL_C = (0, 110, 255), (255, 70, 0), (255, 255, 255), (90, 90, 90)
 WIN = 5
 MISS_CHANCE = 0.18  # chance the AI hesitates for a tick; 0 = never loses
 

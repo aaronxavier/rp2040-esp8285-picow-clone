@@ -50,6 +50,7 @@ The array is powered from VSYS, so `pico/power.h` caps the estimated LED current
 | ESP → Pico | `IMG <768 hex>` | 16x8 frame, `rrggbb` per pixel, row-major from top-left |
 | ESP → Pico | `TIME <secs>` | local seconds since midnight, sent on each new NTP second |
 | ESP → Pico | `CLOCK <rrggbb>` | show the clock |
+| ESP → Pico | `BRIGHT <percent>` | global brightness, sent on change and every second |
 | ESP → Pico | `TIMER <secs> <rrggbb>` | start a countdown (the Pico times it); `0` cancels |
 | Pico → ESP | `T <text>` | telemetry, served at `/telemetry` |
 
@@ -59,11 +60,16 @@ Unknown lines are ignored, which covers the ESP's boot-ROM noise. On the Pico, U
 
 - `/`: the control page
 - `/text?s=Hello&c=00ff40&v=12&r=0`: scroll text (`c` = color, `v` = columns/s, `r=1` = rainbow)
+- `/bright?b=5`: global brightness in percent (1–100); `/bright` alone returns the current value
 - `/clock?c=ff8000`: show the clock
 - `/timer?s=300&c=ff8000`: 5-minute timer (`s=0` cancels, max 86400)
 - `/img?d=<768 hex>`: show a 16x8 frame (128 × `rrggbb`, row-major from the top-left). This is the API for driving the display from your own code.
 
-Each channel value is also its brightness: to dim a pixel, scale its `rr gg bb`.
+Colors everywhere are **perceptual**, like a color picker: send `ff8000` for orange at any brightness.
+The Pico maps each channel through a gamma curve (`GAMMA 2.2` in `pico/main.c`), because WS2812 light output
+is linear in the value sent while the eye isn't. It then applies the global brightness (`/bright`) and the
+300 mA cap. Without the gamma step, mixed colors drift: orange comes out yellowish, for example.
+At low brightness only a few levels remain on the LED side, so very dark colors round to off.
 The API handles about 11 frames/s (≈90 ms per request). Most of that time is the 115200-baud UART, so raising the baud rate is the next speed-up.
 - `/telemetry`: latest Pico telemetry line
 

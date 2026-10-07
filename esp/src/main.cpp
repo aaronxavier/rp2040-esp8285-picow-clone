@@ -5,6 +5,8 @@
 //                 "IMG <768 hex>"                 16x8 frame, rrggbb per pixel, row-major from top-left
 //                 "TIME <secs>"                   local seconds since midnight, sent on each new second (NTP)
 //                 "CLOCK <rrggbb>"                show the clock
+//                 "BRIGHT <percent>"              global brightness, sent on change and every second
+//   Colors are perceptual (as in a color picker); the Pico applies gamma and brightness.
 //                 "TIMER <secs> <rrggbb>"         countdown, flashes at 0 then back to the clock; 0 cancels
 //   Pico -> ESP:  "T <anything>"                  latest telemetry, served at /telemetry
 #include <ESP8266WiFi.h>
@@ -17,6 +19,7 @@
 
 static ESP8266WebServer server(80);
 static String telemetry, rx;
+static int brightPct = 5;
 
 static const char PAGE[] PROGMEM = R"HTML(<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
 <title>LED Matrix</title>
@@ -53,16 +56,17 @@ small{color:#888}
 <script>
 const W = 16, H = 8;  // display size: two 8x8 panels side by side
 const q = id => document.getElementById(id), hex = n => Math.round(n).toString(16).padStart(2, '0');
-const k = () => q('bright').value / 100;
-const scaled = c => [1, 3, 5].map(i => hex(parseInt(c.substr(i, 2), 16) * k())).join('');  // #rrggbb * brightness
+const rgb = c => c.slice(1);  // '#rrggbb' -> 'rrggbb'
+fetch('/bright').then(r => r.text()).then(b => { q('bright').value = b; q('bright').oninput(); });
+q('bright').onchange = () => fetch('/bright?b=' + q('bright').value);
 for (const id of ['bright', 'speed']) (q(id).oninput = () => q(id + 'v').textContent = q(id).value)();
 
 q('showText').onclick = () => {
-  const rb = q('rainbow').checked, c = rb ? '#ffffff' : q('color').value;  // rainbow: Pico uses only the brightness
-  fetch('/text?' + new URLSearchParams({s: q('text').value, c: scaled(c), v: q('speed').value, r: +rb}));
+  const rb = q('rainbow').checked, c = rb ? '#ffffff' : q('color').value;  // rainbow: Pico ignores the color
+  fetch('/text?' + new URLSearchParams({s: q('text').value, c: rgb(c), v: q('speed').value, r: +rb}));
 };
-q('showClock').onclick = () => fetch('/clock?c=' + scaled(q('ccolor').value));
-const timer = s => fetch('/timer?' + new URLSearchParams({s, c: scaled(q('ccolor').value)}));
+q('showClock').onclick = () => fetch('/clock?c=' + rgb(q('ccolor').value));
+const timer = s => fetch('/timer?' + new URLSearchParams({s, c: rgb(q('ccolor').value)}));
 q('startTimer').onclick = () => timer(q('tmin').value * 60 + +q('tsec').value);
 q('cancelTimer').onclick = () => timer(0);
 for (const b of document.querySelectorAll('.quick')) b.onclick = () => timer(b.dataset.m * 60);
@@ -90,7 +94,7 @@ q('showImg').onclick = () => {
   const d = q('prev').getContext('2d').getImageData(0, 0, W, H).data;
   let h = '';
   for (let i = 0; i < d.length; i += 4)
-    for (let j = 0; j < 3; j++) h += hex(255 * (d[i + j] * d[i + 3] / 65025) ** 2.2 * k());  // gamma: LEDs are linear
+    for (let j = 0; j < 3; j++) h += hex(d[i + j] * d[i + 3] / 255);  // transparent -> dark; Pico does gamma
   fetch('/img?d=' + h);
 };
 setInterval(async () => { try { q('tel').textContent = await (await fetch('/telemetry')).text(); } catch (e) {} }, 2000);
@@ -122,6 +126,16 @@ static void handleImg() {
     server.send(204);
 }
 
+static void handleBright() {
+    if (server.hasArg("b")) {
+        long b = server.arg("b").toInt();
+        if (b < 1 || b > 100) return server.send(400, "text/plain", "need b=1..100 (percent)");
+        brightPct = b;
+        Serial.printf("BRIGHT %d\n", brightPct);
+    }
+    server.send(200, "text/plain", String(brightPct));
+}
+
 static void handleClock() {
     String c = server.arg("c");
     if (!isHex(c, 6)) return server.send(400, "text/plain", "need c=rrggbb");
@@ -146,6 +160,7 @@ void setup() {
     server.on("/text", handleText);
     server.on("/img", handleImg);
     server.on("/clock", handleClock);
+    server.on("/bright", handleBright);
     server.on("/timer", handleTimer);
     server.on("/telemetry", [] { server.send(200, "text/plain", telemetry); });
     server.begin();
@@ -178,5 +193,6 @@ void loop() {
         last = millis();
         bool up = WiFi.status() == WL_CONNECTED;
         Serial.printf("WIFI %d %s\n", up, WiFi.localIP().toString().c_str());
+        Serial.printf("BRIGHT %d\n", brightPct);
     }
 }
