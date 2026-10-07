@@ -1,0 +1,5 @@
+pico/build/
+esp/.pio/
+secrets.h
+micropython/
+firmware/
