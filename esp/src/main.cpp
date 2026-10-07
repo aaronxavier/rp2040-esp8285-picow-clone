@@ -31,7 +31,7 @@ canvas{width:256px;height:128px;image-rendering:pixelated;background:#000;displa
 small{color:#888}
 </style>
 <h2>LED Matrix</h2>
-<label>Brightness <input id=bright type=range min=5 max=100 value=40> <span id=brightv></span>%</label>
+<label>Brightness <input id=bright type=range min=1 max=100 value=5> <span id=brightv></span>%</label>
 <fieldset><legend>Scrolling text</legend>
 <input id=text type=text maxlength=200 value="Hello!">
 <label>Color <input id=color type=color value="#00ff40">

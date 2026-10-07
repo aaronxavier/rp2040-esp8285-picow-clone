@@ -120,7 +120,7 @@ static const uint8_t DIGITS[10][5] = {
 };
 static int32_t day_secs = -1;        // local seconds since midnight, from the ESP's NTP; -1 = not synced yet
 static absolute_time_t day_secs_at;  // when day_secs arrived
-static uint32_t clock_color = 0x402000, timer_color;
+static uint32_t clock_color = 0x0d0600, timer_color;  // web page default: #ff8000 at 5% brightness
 static absolute_time_t timer_end, alarm_end;
 static uint32_t timer_total_s;
 static absolute_time_t next_face;
