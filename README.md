@@ -19,7 +19,7 @@ There is no AT firmware here. The ESP runs its own program, and the two chips ex
 - **Timers:** set minutes and seconds, or use the 1/5/10/25-minute quick buttons. The display counts down `MM SS` (or `H MM` from one hour up), with the bar showing time left. At zero it flashes for 10 s, then goes back to the clock.
 - **Images:** pick any image. The browser crops it to a 2:1 strip, shrinks it to 16x8 and gamma-corrects it, then the display shows it.
 
-On boot the display scrolls its IP address. A red dot means it isn't on WiFi yet.
+On boot the display shows the clock; `-- --` means it hasn't got the time yet (no WiFi or NTP).
 
 The Pico handles all display timing, so scrolling stays smooth whatever WiFi is doing.
 

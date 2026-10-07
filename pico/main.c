@@ -53,7 +53,7 @@ static void leds_show(void) {
 }
 
 // ---- scrolling text ----
-static enum { MODE_IDLE, MODE_TEXT, MODE_IMAGE, MODE_CLOCK, MODE_TIMER } mode;
+static enum { MODE_TEXT, MODE_IMAGE, MODE_CLOCK, MODE_TIMER } mode = MODE_CLOCK;  // boot into the clock ("-- --" until NTP)
 static uint8_t cols[MAX_COLS];  // one byte per column, bit y = row y lit
 static int ncols, scroll;
 static uint32_t text_color, step_ms;
@@ -236,13 +236,6 @@ static void handle(char *line) {
         if (up == wifi) return;
         wifi = up;
         printf("wifi %s %s\n", up ? "up" : "down", ip);
-        if (mode != MODE_IDLE) return;
-        if (up) {
-            text_set(ip, 0x00300c, 10, false);  // show where to point the browser
-        } else {
-            pixels[xy(0, 0)] = 0x200000;  // red dot: no WiFi yet
-            leds_show();
-        }
     } else if (sscanf(line, "TEXT %6x %d %d %n", &c, &speed, &rb, &off) == 3 && off > 0) {
         printf("text #%06x %d/s%s \"%s\"\n", c, speed, rb ? " rainbow" : "", line + off);
         text_set(line + off, c, speed, rb);
@@ -303,7 +296,7 @@ int main(void) {
             next_tx = delayed_by_ms(next_tx, 1000);
             char t[80];
             int n = snprintf(t, sizeof t, "T uptime_s=%lu mode=%s", (unsigned long)(to_ms_since_boot(get_absolute_time()) / 1000),
-                             (const char *[]){"idle", "text", "image", "clock", "timer"}[mode]);
+                             (const char *[]){"text", "image", "clock", "timer"}[mode]);
             if (day_secs >= 0) {
                 int s = (day_secs + absolute_time_diff_us(day_secs_at, get_absolute_time()) / 1000000) % 86400;
                 n += snprintf(t + n, sizeof t - n, " time=%02d:%02d:%02d", s / 3600, s / 60 % 60, s % 60);
