@@ -15,26 +15,33 @@
 #define ESP_TX   0
 #define ESP_RX   1
 
-// Matrix layout knobs. Default: LED 0 bottom-right, every row runs the same way.
-#define W          8
-#define H          8
-#define SERPENTINE 0  // 1 if every other row runs right->left
-#define FLIP_X     1  // 0 if text comes out mirrored
-#define FLIP_Y     1  // 0 if text comes out upside down
+// Display layout knobs: identical 8x8 panels side by side, chained DOUT -> DIN.
+// Within a panel: LED 0 bottom-right, every row runs the same way.
+#define PANELS      2
+#define PANEL_W     8
+#define W           (PANELS * PANEL_W)
+#define H           8
+#define SERPENTINE  0  // 1 if every other row runs right->left
+#define FLIP_X      1  // 0 if text comes out mirrored within a panel
+#define FLIP_Y      1  // 0 if text comes out upside down
+#define RIGHT_FIRST 1  // 1: GP22 feeds the rightmost panel; 0 if the panel halves come out swapped
 
 #define MAX_TEXT 200
 #define MAX_COLS (W + MAX_TEXT * 9)
 
 static uint32_t pixels[W * H];  // 0xRRGGBB, indexed by LED position on the chain
 
-static int xy(int x, int y) {  // x: 0 = left, y: 0 = top
-    if (FLIP_X) x = W - 1 - x;
+static int xy(int x, int y) {  // x: 0 = left of the whole display, y: 0 = top
+    int panel = x / PANEL_W;
+    x %= PANEL_W;
+    if (RIGHT_FIRST) panel = PANELS - 1 - panel;  // position on the chain
+    if (FLIP_X) x = PANEL_W - 1 - x;
     if (FLIP_Y) y = H - 1 - y;
-    if (SERPENTINE && (y & 1)) x = W - 1 - x;
-    return y * W + x;
+    if (SERPENTINE && (y & 1)) x = PANEL_W - 1 - x;
+    return panel * PANEL_W * H + y * PANEL_W + x;
 }
 
-// ponytail: blocking PIO pushes, ~2ms/frame; move to DMA if this stalls realtime work
+// ponytail: blocking PIO pushes, ~30us/LED (~4ms for 2 panels); move to DMA if this stalls realtime work
 static void leds_show(void) {
     static uint32_t frame[W * H];
     power_limit(pixels, frame, W * H);  // array runs off VSYS: never full brightness
@@ -106,22 +113,28 @@ static void text_draw(void) {
 }
 
 // ---- UART RX into a ring buffer from the IRQ, so the main loop never misses bytes ----
-static volatile char rx_buf[256];
-static volatile uint8_t rx_head, rx_tail;
+#define RX_SIZE 1024  // power of two
+static volatile char rx_buf[RX_SIZE];
+static volatile uint16_t rx_head, rx_tail;
 
 static void on_uart_rx(void) {
     while (uart_is_readable(ESP_UART)) {
         char c = uart_getc(ESP_UART);
-        if ((uint8_t)(rx_head + 1) != rx_tail) rx_buf[rx_head++] = c;  // drop on overflow
+        uint16_t next = (rx_head + 1) & (RX_SIZE - 1);
+        if (next != rx_tail) {  // drop on overflow
+            rx_buf[rx_head] = c;
+            rx_head = next;
+        }
     }
 }
 
 // Returns a complete line (without '\n') or NULL. Non-blocking.
 static char *read_line(void) {
-    static char line[512];
+    static char line[W * H * 6 + 16];  // fits a full IMG line
     static size_t n;
     while (rx_tail != rx_head) {
-        char c = rx_buf[rx_tail++];
+        char c = rx_buf[rx_tail];
+        rx_tail = (rx_tail + 1) & (RX_SIZE - 1);
         if (c == '\r') continue;
         if (c != '\n') {
             if (n < sizeof line - 1) line[n++] = c;
@@ -138,7 +151,7 @@ static int hexval(char c) {
     return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
 }
 
-// IMG payload: 64 pixels as rrggbb hex, row-major from the top-left.
+// IMG payload: W*H pixels as rrggbb hex, row-major from the top-left of the whole display.
 static bool image_set(const char *h) {
     if (strlen(h) != W * H * 6) return false;
     for (int i = 0; i < W * H * 6; i++)

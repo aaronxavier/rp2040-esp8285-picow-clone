@@ -2,7 +2,8 @@
 """Calm full-panel breathing via the /img API.  python3 breath.py [seconds] [host]"""
 import math, socket, sys, time, urllib.request
 
-PEAK = (36, 22, 0)  # warm yellow; 64 LEDs x (36+22) stays just under the 300mA cap in pico/power.h
+N = 16 * 8          # two 8x8 panels
+PEAK = (18, 11, 0)  # warm yellow; 128 LEDs x (18+11) stays just under the 300mA cap in pico/power.h
 PERIOD = 5.0        # seconds per breath
 FLOOR = 0.04        # never fully off: avoids the coarse steps at the bottom of 8-bit
 
@@ -14,7 +15,7 @@ while (t := time.monotonic() - t0) < secs:
     level = FLOOR + (1 - FLOOR) * level ** 2.2                     # gamma: eyes see linear steps as fast at the bottom
     px = '%02x%02x%02x' % tuple(round(c * level) for c in PEAK)
     try:
-        urllib.request.urlopen(f'http://{host}/img?d={px * 64}', timeout=1).read()
+        urllib.request.urlopen(f'http://{host}/img?d={px * N}', timeout=1).read()
     except OSError:
         pass
-urllib.request.urlopen(f'http://{host}/img?d={"000000" * 64}', timeout=1).read()
+urllib.request.urlopen(f'http://{host}/img?d={"000000" * N}', timeout=1).read()

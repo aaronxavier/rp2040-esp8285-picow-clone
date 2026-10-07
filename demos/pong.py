@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Pong on the 8x8 matrix, driven only through the HTTP API (/img).
+"""Pong on the 16x8 display (two 8x8 panels), driven only through the HTTP API (/img).
 
     python3 pong.py [host]       # default host: pico-esp.local, Ctrl+C to stop
     python3 pong.py --selftest   # run the game logic offline, no network
 """
 import random, socket, sys, time, urllib.request
 
-W = H = 8
+W, H = 16, 8
 PADDLE = 3
 LEFT_C, RIGHT_C, BALL_C, TRAIL_C = (0, 40, 120), (120, 20, 0), (110, 110, 110), (20, 20, 20)
 WIN = 5
@@ -20,7 +20,7 @@ class Pong:
         self.serve(random.choice((-1, 1)))
 
     def serve(self, dx):
-        self.bx, self.by = 3 if dx > 0 else 4, random.randrange(2, 6)
+        self.bx, self.by = W // 2 - 1 if dx > 0 else W // 2, random.randrange(2, 6)
         self.dx, self.dy = dx, random.choice((-1, 1))
         self.trail = None
         self.hits = 0

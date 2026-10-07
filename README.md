@@ -9,15 +9,15 @@ The board actually has two microcontrollers. This repo programs both, with each 
 
 | Chip | Code | Job |
 |---|---|---|
-| **RP2040** | `pico/`: C, pico-sdk 2.2 | 8x8 WS2812 matrix: text rendering, scroll timing, PIO output |
+| **RP2040** | `pico/`: C, pico-sdk 2.2 | 16x8 WS2812 display (two 8x8 panels): text rendering, scroll timing, PIO output |
 | **ESP8285** | `esp/`: PlatformIO, ESP8266 Arduino core | WiFi, web UI, telemetry, OTA updates |
 
 There is no AT firmware here. The ESP runs its own program, and the two chips exchange text lines over UART.
-**The application:** an 8x8 WS2812 matrix on GP22 that you control from your browser.
+**The application:** a 16x8 WS2812 display on GP22, made of two chained 8x8 panels, that you control from your browser.
 - **Scrolling text:** set the text, color, speed and brightness. "Surprise me" spreads a rainbow across the string.
-- **Images:** pick any image. The browser crops it to a square, shrinks it to 8x8 and gamma-corrects it, then the matrix shows it.
+- **Images:** pick any image. The browser crops it to a 2:1 strip, shrinks it to 16x8 and gamma-corrects it, then the display shows it.
 
-On boot the matrix scrolls its IP address. A red dot means it isn't on WiFi yet.
+On boot the display scrolls its IP address. A red dot means it isn't on WiFi yet.
 
 The Pico handles all display timing, so scrolling stays smooth whatever WiFi is doing.
 
@@ -31,8 +31,10 @@ The Pico handles all display timing, so scrolling stays smooth whatever WiFi is 
 | UART RX ← TX | GP1 | TX |
 | WS2812 data (array **DIN**) | GP22 | — |
 
-Matrix wiring is configured at the top of `pico/main.c`: `SERPENTINE`, `FLIP_X`, `FLIP_Y`.
-The defaults assume LED 0 at the bottom right and every row running the same way. If text comes out mirrored or upside down, flip the matching knob.
+Display layout is configured at the top of `pico/main.c`:
+- `PANELS`, `PANEL_W`: how many 8x8 panels sit side by side.
+- `RIGHT_FIRST`: GP22 feeds the rightmost panel, whose DOUT feeds the next one to its left. Set it to 0 if the halves come out swapped.
+- `SERPENTINE`, `FLIP_X`, `FLIP_Y`: wiring within a panel. The defaults assume LED 0 at the bottom right and every row running the same way. If text comes out mirrored or upside down, flip the matching knob.
 
 The array is powered from VSYS, so `pico/power.h` caps the estimated LED current at
 300 mA by scaling whole frames. Change `LED_BUDGET_MA` / `LED_MA_PER_CHANNEL` to match your supply.
@@ -43,7 +45,7 @@ The array is powered from VSYS, so `pico/power.h` caps the estimated LED current
 |---|---|---|
 | ESP → Pico | `WIFI <0\|1> <ip>` | every 1 s; on first connect the Pico scrolls the IP |
 | ESP → Pico | `TEXT <rrggbb> <speed> <rainbow 0\|1> <text>` | scroll text, speed in columns/s (1–60); rainbow spreads hues over the string |
-| ESP → Pico | `IMG <384 hex>` | 8x8 image, `rrggbb` per pixel, row-major from top-left |
+| ESP → Pico | `IMG <768 hex>` | 16x8 frame, `rrggbb` per pixel, row-major from top-left |
 | Pico → ESP | `T <text>` | telemetry, served at `/telemetry` |
 
 Unknown lines are ignored, which covers the ESP's boot-ROM noise. On the Pico, UART RX is interrupt-driven into a ring buffer, so the main loop never blocks on the ESP.
@@ -52,15 +54,15 @@ Unknown lines are ignored, which covers the ESP's boot-ROM noise. On the Pico, U
 
 - `/`: the control page
 - `/text?s=Hello&c=00ff40&v=12&r=0`: scroll text (`c` = color, `v` = columns/s, `r=1` = rainbow)
-- `/img?d=<384 hex>`: show an 8x8 frame (64 × `rrggbb`, row-major from the top-left). This is the API for driving the matrix from your own code.
+- `/img?d=<768 hex>`: show a 16x8 frame (128 × `rrggbb`, row-major from the top-left). This is the API for driving the display from your own code.
 
 Each channel value is also its brightness: to dim a pixel, scale its `rr gg bb`.
-The API handles about 18 frames/s (≈55 ms per request).
+The API handles about 11 frames/s (≈90 ms per request). Most of that time is the 115200-baud UART, so raising the baud rate is the next speed-up.
 - `/telemetry`: latest Pico telemetry line
 
 ## Demos (`demos/`, Python standard library only)
 
-These drive the matrix only through the HTTP API:
+These drive the display only through the HTTP API:
 
     python3 demos/pong.py              # computer vs computer pong, first to 5
     python3 demos/pong.py --selftest   # game logic only, no network

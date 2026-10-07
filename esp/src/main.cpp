@@ -2,7 +2,7 @@
 //   ESP -> Pico:  "WIFI <0|1> <ip>"              every second
 //                 "TEXT <rrggbb> <speed> <rainbow 0|1> <text>"
 //                                                 scroll text, speed in columns/s (1-60)
-//                 "IMG <384 hex>"                 8x8 image, rrggbb per pixel, row-major from top-left
+//                 "IMG <768 hex>"                 16x8 frame, rrggbb per pixel, row-major from top-left
 //   Pico -> ESP:  "T <anything>"                  latest telemetry, served at /telemetry
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
@@ -21,7 +21,7 @@ label{display:flex;gap:.5rem;align-items:center;margin:.5rem 0}
 input[type=text]{width:100%;box-sizing:border-box;font-size:1.1rem;padding:.4rem}
 input[type=range]{flex:1}
 button{font-size:1rem;padding:.4rem 1rem}
-canvas{width:128px;height:128px;image-rendering:pixelated;background:#000;display:block;margin:.5rem 0}
+canvas{width:256px;height:128px;image-rendering:pixelated;background:#000;display:block;margin:.5rem 0}
 small{color:#888}
 </style>
 <h2>LED Matrix</h2>
@@ -34,10 +34,11 @@ small{color:#888}
 <button id=showText>Show text</button></fieldset>
 <fieldset><legend>Image</legend>
 <input id=file type=file accept="image/*">
-<canvas id=prev width=8 height=8></canvas>
+<canvas id=prev width=16 height=8></canvas>
 <button id=showImg disabled>Show image</button></fieldset>
 <small>Pico: <span id=tel>...</span></small>
 <script>
+const W = 16, H = 8;  // display size: two 8x8 panels side by side
 const q = id => document.getElementById(id), hex = n => Math.round(n).toString(16).padStart(2, '0');
 const k = () => q('bright').value / 100;
 for (const id of ['bright', 'speed']) (q(id).oninput = () => q(id + 'v').textContent = q(id).value)();
@@ -50,25 +51,25 @@ q('showText').onclick = () => {
 q('rainbow').onchange = () => q('color').disabled = q('rainbow').checked;
 q('text').onkeydown = e => { if (e.key == 'Enter') q('showText').click(); };  // must not return false: that cancels typing
 
-// Center-crop to a square, then halve repeatedly so the 8x8 result averages all pixels.
+// Center-crop to the display's aspect, then halve repeatedly so the result averages all pixels.
 q('file').onchange = async () => {
   const img = await createImageBitmap(q('file').files[0]);
-  let s = Math.min(img.width, img.height), cv = document.createElement('canvas');
-  cv.width = cv.height = s;
-  cv.getContext('2d').drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, s, s);
-  while (s > 8) {
-    const n = Math.max(8, s >> 1), t = document.createElement('canvas');
-    t.width = t.height = n;
-    t.getContext('2d').drawImage(cv, 0, 0, n, n);
-    cv = t; s = n;
+  let h = Math.floor(Math.min(img.height, img.width * H / W)), w = h * W / H, cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  cv.getContext('2d').drawImage(img, (img.width - w) / 2, (img.height - h) / 2, w, h, 0, 0, w, h);
+  while (h > H) {
+    const nh = Math.max(H, h >> 1), nw = nh * W / H, t = document.createElement('canvas');
+    t.width = nw; t.height = nh;
+    t.getContext('2d').drawImage(cv, 0, 0, nw, nh);
+    cv = t; h = nh;
   }
   const p = q('prev').getContext('2d');
-  p.clearRect(0, 0, 8, 8);
-  p.drawImage(cv, 0, 0);
+  p.clearRect(0, 0, W, H);
+  p.drawImage(cv, 0, 0, W, H);
   q('showImg').disabled = false;
 };
 q('showImg').onclick = () => {
-  const d = q('prev').getContext('2d').getImageData(0, 0, 8, 8).data;
+  const d = q('prev').getContext('2d').getImageData(0, 0, W, H).data;
   let h = '';
   for (let i = 0; i < d.length; i += 4)
     for (let j = 0; j < 3; j++) h += hex(255 * (d[i + j] * d[i + 3] / 65025) ** 2.2 * k());  // gamma: LEDs are linear
@@ -98,7 +99,7 @@ static void handleText() {
 
 static void handleImg() {
     String d = server.arg("d");
-    if (!isHex(d, 384)) return server.send(400, "text/plain", "need d = 64 x rrggbb");
+    if (!isHex(d, 16 * 8 * 6)) return server.send(400, "text/plain", "need d = 128 x rrggbb (16x8)");
     Serial.printf("IMG %s\n", d.c_str());
     server.send(204);
 }

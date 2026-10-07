@@ -30,18 +30,34 @@ with schemdraw.Drawing(file='wiring.svg', show=False) as d:
     elm.EncircleBox([esp, rp], padx=0.4, pady=0.5).linestyle('--').color('#888').label(
         'TZT "Pico W" clone board', loc='top', fontsize=11)
 
-    # 8x8 WS2812 matrix to the right
+    # two 8x8 WS2812 panels, chained: GP22 -> right panel -> left panel
+    def panel(title):
+        return elm.Ic(pins=[
+            elm.IcPin(name='DIN', side='left', slot='3/3'),
+            elm.IcPin(name='5V', side='left', slot='2/3'),
+            elm.IcPin(name='GND', side='left', slot='1/3'),
+            elm.IcPin(name='DOUT', side='right', slot='3/3'),
+            elm.IcPin(name='5V', side='right', slot='2/3', anchorname='V5out'),
+            elm.IcPin(name='GND', side='right', slot='1/3', anchorname='GNDout'),
+        ], size=(2.8, 3.5), pinspacing=1, edgepadH=0.6).label(title, loc='top', fontsize=12)
+
     d.push()
     d.move_from(rp.pin29, dx=4.5, dy=0)
-    mx = elm.Ic(pins=[
-        elm.IcPin(name='DIN', side='left', slot='3/3'),
-        elm.IcPin(name='5V', side='left', slot='2/3'),
-        elm.IcPin(name='GND', side='left', slot='1/3'),
-        elm.IcPin(name='DOUT', side='right', slot='3/3'),
-    ], size=(2.8, 3.5), pinspacing=1, edgepadH=0.6).label('WS2812 8x8 matrix', loc='top', fontsize=13).anchor('DIN')
+    p1 = panel('Panel 1: right, 8x8').anchor('DIN')
     d.pop()
-    elm.Wire('-').at(rp.pin29).to(mx.DIN).color('#2a7')
-    elm.Wire('-').at(rp.pin39).to(mx['5V']).color('#d33')
-    elm.Wire('-').at(rp.pin38).to(mx.GND).color('#333')
-    elm.Label().at((mx.center[0], mx.GND[1] - 1.6)).label('DOUT: leave unconnected\n(data goes into DIN!)', fontsize=9, color='#888')
-    elm.Label().at(((rp.pin39[0] + mx['5V'][0]) / 2, rp.pin39[1] - 0.35)).label('max ~300 mA, see pico/power.h', fontsize=9, color='#888')
+    d.push()
+    d.move_from(p1.DOUT, dx=2.5, dy=0)
+    p2 = panel('Panel 2: left, 8x8').anchor('DIN')
+    d.pop()
+
+    elm.Wire('-').at(rp.pin29).to(p1.DIN).color('#2a7')
+    elm.Wire('-').at(rp.pin39).to(p1['5V']).color('#d33')
+    elm.Wire('-').at(rp.pin38).to(p1.GND).color('#333')
+    elm.Wire('-').at(p1.DOUT).to(p2.DIN).color('#2a7')
+    elm.Wire('-').at(p1.V5out).to(p2['5V']).color('#d33')
+    elm.Wire('-').at(p1.GNDout).to(p2.GND).color('#333')
+
+    elm.Label().at(((rp.pin39[0] + p1['5V'][0]) / 2, rp.pin39[1] - 0.35)).label('max ~300 mA total, see pico/power.h', fontsize=9, color='#888')
+    elm.Label().at(((p1.center[0] + p2.center[0]) / 2, p1.GND[1] - 1.6)).label(
+        'Viewed from the front, panel 2 sits to the LEFT of panel 1 (same orientation).\n'
+        'Data enters DIN, never DOUT. Panel 2 DOUT stays unconnected.', fontsize=9, color='#888')
